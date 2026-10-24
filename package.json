@@ -1,0 +1,26 @@
+{
+  "name": "intelligent-api-monitoring",
+  "version": "1.0.0",
+  "description": "Intelligent API Monitoring & Alert System with AI-Powered Alert Generation",
+  "private": true,
+  "scripts": {
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "start:backend": "cd backend && npm start",
+    "start:frontend": "cd frontend && npm run dev",
+    "test": "cd backend && npm test",
+    "test:backend": "cd backend && npm test",
+    "monitor:file": "cd backend && npm run monitor:file"
+  },
+  "keywords": [
+    "api-monitoring",
+    "anomaly-detection",
+    "llm",
+    "gemini",
+    "openai",
+    "express",
+    "react"
+  ],
+  "author": "",
+  "license": "ISC"
+}
