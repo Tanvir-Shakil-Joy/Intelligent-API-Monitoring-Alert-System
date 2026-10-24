@@ -1,6 +1,6 @@
 # Intelligent API Monitoring & Alert System
 
-An automated API health monitoring and intelligent anomaly detection system for a healthcare company integrating with external patient and clinical services. The system evaluates response metrics, detects multi-dimensional performance and availability anomalies, generates concise human-readable alerts using LLMs with deterministic zero-key fallbacks, persists anomalies in MongoDB, and displays active incidents on a real-time React dashboard.
+An automated API health monitoring and intelligent anomaly detection system for a healthcare company integrating with external patient and clinical services. The system evaluates response metrics, detects multi-dimensional performance and availability anomalies, generates concise human-readable alerts using LLMs with deterministic zero-key fallbacks, persists anomalies in MongoDB (with automatic resilient embedded storage fallback), and displays active incidents on a real-time React dashboard.
 
 ---
 
@@ -24,12 +24,13 @@ flowchart TD
         B3["Batch Orchestrator (p-limit Concurrency Pool)"]
         B4["AI Service (Gemini / OpenAI Adapter)"]
         B5["Deterministic Fallback Engine"]
-        B6["MongoDB Alert Service (Mongoose)"]
+        B6["Resilient Storage Engine (MongoDB + Embedded Fallback)"]
         B7["Nodemailer Email Digest (Optional)"]
     end
 
     subgraph Storage["Storage & External"]
         DB[("MongoDB 7 Database")]
+        EMBED[("Embedded JSON Storage Engine")]
         LLM["Google Gemini / OpenAI API"]
         SMTP["SMTP Mail Server"]
     end
@@ -43,7 +44,9 @@ flowchart TD
     A1 & A2 --> B1 --> B2 --> B3
     B3 --> B4 -->|API Key Set| LLM
     B4 -->|Missing Key / Error| B5
-    B3 --> B6 --> DB
+    B3 --> B6
+    B6 -->|Primary| DB
+    B6 -.->|Fallback if DB offline| EMBED
     B3 -.->|EMAIL_ENABLED| B7 -.-> SMTP
     FE1 & FE2 & FE3 <-->|GET /alerts & POST /monitor| Backend
 ```
@@ -53,9 +56,9 @@ flowchart TD
 ## 2. Prerequisites
 
 - **Node.js**: `v20.x` or higher (LTS recommended)
-- **MongoDB**: `v7.x` or higher running locally or via MongoDB Atlas
+- **MongoDB**: `v7.x` or higher running locally or via MongoDB Atlas *(Optional: If MongoDB is offline, an automatic embedded persistent JSON store activates seamlessly)*
 - **Package Manager**: `npm` (v10+)
-- **Optional**: Docker & Docker Compose (for containerized deployments)
+- **LLM API Key**: Google Gemini API key *(Optional: If omitted, zero-key deterministic fallback generates human-readable alerts instantly)*
 
 ---
 
@@ -67,41 +70,51 @@ git clone <repository-url>
 cd "Intelligent API Monitoring & Alert System"
 ```
 
-### 3.2 Backend Installation & Configuration
+### 3.2 Environment Configuration
+Copy the provided environment template to `.env` (at root or in `backend/.env`):
 ```bash
-cd backend
-npm install
-
-# Copy environment template
 cp .env.example .env
 ```
 
-Edit `backend/.env` with your preferred settings:
+Configure your preferred settings in `.env`:
 ```env
 PORT=5001
 MONGO_URI=mongodb://localhost:27017/api_monitor
 LLM_PROVIDER=gemini
+LLM_MODEL=gemini-3.5-flash-lite
 LLM_API_KEY=your_gemini_api_key_here  # Leave blank to test deterministic fallback
 ```
 
-Start the backend:
+### 3.3 Install Dependencies
 ```bash
-# Production mode
-npm start
-
-# Development mode with hot-reload
-npm run dev
+# Install root, backend, and frontend packages
+npm install --prefix backend
+npm install --prefix frontend
 ```
-*Backend runs at `http://localhost:5001` (or port `5000` if available; automatically falls back if 5000 is occupied by macOS AirPlay).*
-*Database: Connects to MongoDB when available; automatically activates embedded persistent storage if MongoDB is not running locally.*
 
-### 3.3 Frontend Installation & Launch
+### 3.4 Launch Application
+
+**Option A: Run From Root (Convenience Scripts)**
 ```bash
-cd ../frontend
-npm install
-npm run dev
+# Terminal 1: Start Backend (Port 5001)
+npm run start:backend
+
+# Terminal 2: Start Frontend (Port 3000)
+npm run start:frontend
 ```
-*Frontend runs at `http://localhost:3000` and automatically proxies API requests to the backend.*
+
+**Option B: Run Individually**
+```bash
+# Backend (Express API on Port 5001)
+cd backend && npm run dev
+
+# Frontend (Vite Dev Server on Port 3000)
+cd frontend && npm run dev
+```
+
+* Backend runs at `http://localhost:5001` (with automatic port collision fallback if 5000 is occupied by macOS AirPlay).
+* Frontend runs at `http://localhost:3000` with reverse proxy to `http://localhost:5001`.
+* Database: Connects to MongoDB when available; automatically activates embedded persistent storage if MongoDB is offline.
 
 ---
 
@@ -116,7 +129,7 @@ npm run dev
 | `VERY_SLOW_THRESHOLD_MS` | Number | `5000` | Latency exceeding this triggers a `high` severity alert. |
 | `LLM_PROVIDER` | String | `gemini` | AI provider adapter (`gemini` or `openai`). |
 | `LLM_API_KEY` | String | `""` | Provider API key. When blank, system seamlessly uses deterministic fallbacks. |
-| `LLM_MODEL` | String | `gemini-1.5-flash` | LLM model identifier (`gemini-1.5-flash`, `gpt-4o-mini`). |
+| `LLM_MODEL` | String | `gemini-3.5-flash-lite` | LLM model identifier (`gemini-3.5-flash-lite`, `gpt-4o-mini`). |
 | `LLM_TIMEOUT_MS` | Number | `10000` | Max timeout for AI generation before triggering fallback (10s). |
 | `LLM_CONCURRENCY` | Number | `5` | Maximum concurrent LLM requests via `p-limit`. |
 | `EMAIL_ENABLED` | Boolean | `false` | Master toggle for email digest reports on critical/high alerts. |
@@ -131,7 +144,7 @@ npm run dev
 
 ## 5. Anomaly Detection Rules & Severity Hierarchy
 
-The pure rules engine (`anomalyService.js`) independently evaluates each response metric against three criteria. A single response can trigger multiple anomalies simultaneously.
+The pure rules engine (`backend/src/services/anomalyService.js`) independently evaluates each response metric against three criteria. A single response can trigger multiple anomalies simultaneously.
 
 | Anomaly Type | Condition | Severity | Description |
 |---|---|---|---|
@@ -183,16 +196,22 @@ curl -X POST http://localhost:5001/monitor \
     "alertsCreated": 1,
     "invalidItems": 0,
     "failures": 0,
-    "durationMs": 740
+    "durationMs": 1158
   },
   "alerts": [
     {
-      "id": "6650f1c2a4b3c2d1e0f9a8b7",
+      "id": "7586ed77301e5fb0d4af7837",
       "apiName": "AppointmentAPI",
       "severity": "critical",
       "anomalyTypes": ["HIGH_RESPONSE_TIME", "SERVER_ERROR", "ZERO_RECORDS"],
-      "message": "AppointmentAPI failed with status 500 and returned 0 records. Possible outage or data issue.",
-      "messageSource": "ai"
+      "metrics": {
+        "responseTimeMs": 5500,
+        "statusCode": 500,
+        "recordsReturned": 0
+      },
+      "message": "AppointmentAPI returned status 500 with a response time of 5500 ms and 0 records, indicating severely impaired performance. Likely service outage.",
+      "messageSource": "ai",
+      "status": "active"
     }
   ]
 }
@@ -202,12 +221,11 @@ curl -X POST http://localhost:5001/monitor \
 Pass static JSON datasets through the exact same ingestion and AI pipeline used by `POST /monitor`:
 
 ```bash
-cd backend
+# From repository root
 npm run monitor:file
-```
-*To run against a custom file:*
-```bash
-npm run monitor:file -- /path/to/custom-data.json
+
+# Or with a custom file path
+node backend/scripts/runFromFile.js /path/to/custom-data.json
 ```
 
 ---
@@ -225,6 +243,9 @@ curl "http://localhost:5001/alerts?severity=critical"
 
 # Filter by API name
 curl "http://localhost:5001/alerts?apiName=AppointmentAPI"
+
+# Pagination
+curl "http://localhost:5001/alerts?limit=10&page=1"
 ```
 
 ---
@@ -242,36 +263,42 @@ To receive email digests when new `critical` or `high` severity anomalies occur:
    SMTP_PASS=your-app-password
    ALERT_RECIPIENT_EMAIL=oncall-team@healthcare.org
    ```
-2. Any batch containing high-severity anomalies will dispatch an HTML digest table.
+2. Any batch containing high/critical severity anomalies will dispatch an HTML digest table.
 3. Email delivery errors are logged to Winston and **never** block or fail the HTTP response.
 
 ---
 
-## 9. Verification & Testing
+## 9. Verification & Automated Testing
 
-### 9.1 Running Automated Unit Tests
+### 9.1 Running Automated Test Suite (42 Tests)
 ```bash
-cd backend
+# Run from repository root
 npm test
+
+# Or run directly from backend
+cd backend && npm test
 ```
-The test suite validates:
-- `anomalyService.test.js`: Pure rules engine, threshold boundaries, and severity hierarchy.
-- `fallbackMessages.test.js`: Grammatical correctness of fallback messages across all anomaly combinations.
+
+The test suite consists of 3 comprehensive suites validating all system requirements:
+- **`api.test.js`**: Full integration suite covering `POST /monitor`, `GET /alerts`, status filters, search sanitization, malformed payload partitioning, 404 handler, and health checks.
+- **`anomalyService.test.js`**: Pure rules engine unit tests validating latency boundaries, HTTP status classifications, missing/zero record detection, and severity escalation hierarchy.
+- **`fallbackMessages.test.js`**: Deterministic fallback engine tests verifying grammatical accuracy and clarity across all possible combinations of anomalies without LLM dependencies.
 
 ### 9.2 Verification Checklist & Edge Cases
-| Scenario | Command | Expected Result |
+| Scenario | Command / Action | Expected Result |
 |---|---|---|
 | **Empty Array** | `curl -X POST http://localhost:5001/monitor -H "Content-Type: application/json" -d '[]'` | `400 Bad Request` (`VALIDATION_ERROR`) |
 | **Non-Array Body** | `curl -X POST http://localhost:5001/monitor -H "Content-Type: application/json" -d '{}'` | `400 Bad Request` (`VALIDATION_ERROR`) |
 | **Malformed Item Partitioning** | Submit 1 valid item + 1 invalid item (`api_name: ""`) | `200 OK`, valid item saved, `invalidItems: 1` |
-| **Zero-Key Fallback** | Unset `LLM_API_KEY` in `.env` and submit batch | `200 OK`, `messageSource: "fallback"`, <50ms latency |
+| **Zero-Key Fallback** | Unset `LLM_API_KEY` in `.env` and submit batch | `200 OK`, `messageSource: "fallback"`, <50ms response |
+| **Database Disconnect** | Stop local MongoDB daemon | `200 OK`, auto-switches to embedded persistent storage |
 
 ---
 
 ## 10. Frontend Dashboard Features
 
-- **Header**: Live backend health status, auto-refresh countdown (every 15s), manual refresh.
-- **Summary Cards**: Click-to-filter stat cards for Total, Critical, High, and Medium anomalies.
-- **Filter Controls**: Severity filter pills and real-time API name search.
-- **Alert Cards**: Displays color-coded badges, relative timestamps, raw telemetry pills, and AI (`✨ AI Alert`) vs. Fallback badges.
-- **Run Monitor Panel**: Built-in test sandbox to submit JSON arrays directly to `POST /monitor` in the browser with live syntax validation.
+- **Header**: Live backend health status, auto-refresh countdown (every 10s), manual refresh trigger.
+- **Summary Cards**: Click-to-filter stat cards for Total, Critical, High, and Medium anomalies with full keyboard accessibility (`Enter`/`Space`).
+- **Filter Controls**: Severity filter pills, real-time API name search, and reset filter capabilities.
+- **Alert Cards**: Color-coded severity badges, relative timestamps, raw telemetry pills (status, latency, records), and AI (`✨ AI Alert`) vs. Fallback badges.
+- **Run Monitor Panel**: Built-in test sandbox to submit JSON arrays directly to `POST /monitor` in the browser with sample presets and syntax validation.
