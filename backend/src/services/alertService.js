@@ -9,20 +9,28 @@ const { isUsingMongo } = require('../config/db');
 const STORAGE_DIR = path.resolve(__dirname, '../../data');
 const STORAGE_FILE = path.join(STORAGE_DIR, 'alerts-storage.json');
 
-// Initialize in-memory cache for embedded fallback mode
+// In-memory cache for embedded fallback mode
 let embeddedAlerts = [];
-try {
-  if (!fs.existsSync(STORAGE_DIR)) {
-    fs.mkdirSync(STORAGE_DIR, { recursive: true });
+
+function loadEmbeddedAlerts() {
+  try {
+    if (!fs.existsSync(STORAGE_DIR)) {
+      fs.mkdirSync(STORAGE_DIR, { recursive: true });
+    }
+    if (fs.existsSync(STORAGE_FILE)) {
+      const raw = fs.readFileSync(STORAGE_FILE, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        embeddedAlerts = parsed;
+      }
+    }
+  } catch (err) {
+    // Keep current memory state if parse fails
   }
-  if (fs.existsSync(STORAGE_FILE)) {
-    const raw = fs.readFileSync(STORAGE_FILE, 'utf8');
-    embeddedAlerts = JSON.parse(raw);
-    if (!Array.isArray(embeddedAlerts)) embeddedAlerts = [];
-  }
-} catch (err) {
-  embeddedAlerts = [];
 }
+
+// Initial load
+loadEmbeddedAlerts();
 
 function saveEmbeddedAlerts() {
   try {
@@ -61,6 +69,7 @@ async function persistAlert(payload) {
   }
 
   // Embedded storage fallback
+  loadEmbeddedAlerts();
   const now = new Date().toISOString();
   const alertRecord = {
     id: crypto.randomBytes(12).toString('hex'),
@@ -116,6 +125,7 @@ async function persistBatchAlerts(alertsPayload) {
   }
 
   // Embedded storage fallback
+  loadEmbeddedAlerts();
   const created = [];
   alertsPayload.forEach((payload) => {
     const now = new Date().toISOString();
@@ -198,6 +208,7 @@ async function getActiveAlerts(filters = {}) {
   }
 
   // Embedded storage fallback
+  loadEmbeddedAlerts();
   let filtered = embeddedAlerts.filter((a) => a.status === 'active');
 
   if (targetSeverity) {
